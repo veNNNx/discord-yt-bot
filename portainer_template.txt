@@ -1,0 +1,13 @@
+version: '3'
+
+services:
+  my-discord-bot:
+    image: discord-music-bot:latest
+
+    networks:
+      - discord-network
+    restart: always
+
+networks:
+  discord-network:
+    driver: bridge
