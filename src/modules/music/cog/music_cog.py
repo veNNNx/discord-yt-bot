@@ -21,16 +21,18 @@ class MusicCog(Cog):
 
     @command(name="p", help="Play a song or playlist from YouTube")
     async def play(self, ctx: Context, url: str) -> None:
-        asyncio.create_task(self._music_service.play(ctx=ctx, url=url))
+        asyncio.create_task(
+            self._music_service.play(
+                ctx=ctx, url=url, voice_clients=self.bot.voice_clients
+            )
+        )
 
     @command(name="s", help="Skip the currently playing song")
     async def skip(self, ctx: Context) -> None:
-        asyncio.create_task(self._music_service.skip(ctx=ctx))
+        asyncio.create_task(
+            self._music_service.skip(ctx=ctx, voice_clients=self.bot.voice_clients)
+        )
 
     @command(name="q", help="Show the current music queue")
     async def show_queue(self, ctx: Context) -> None:
         asyncio.create_task(self._music_service.show_queue(ctx=ctx))
-
-    @command(name="c", help="Clear queue")
-    async def clear_queue(self, ctx: Context) -> None:
-        asyncio.create_task(self._music_service.clear_queue(ctx=ctx))
