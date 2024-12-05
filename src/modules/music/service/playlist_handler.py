@@ -11,17 +11,18 @@ class Queue(NamedTuple):
 
 @define
 class PlaylistHandler:
-    async def get_first_url_from_playlist(
-        self, url: str, queue_list: list[Queue]
-    ) -> None:
-        await self._get_urls(url=url, queue_list=queue_list)
-
     async def get_remaining_urls_from_playlist(
-        self, url: str, queue_list: list[Queue]
+        self,
+        url: str,
+        queue_list: list[Queue],
     ) -> None:
         await self._get_urls(url=url, queue_list=queue_list)
 
-    async def _get_urls(self, url: str, queue_list: list[Queue]) -> None:
+    async def _get_urls(
+        self,
+        url: str,
+        queue_list: list[Queue],
+    ) -> None:
         process = await asyncio.create_subprocess_exec(
             "yt-dlp",
             url,
@@ -37,12 +38,12 @@ class PlaylistHandler:
 
         try:
             while True:
-                title_line = await process.stdout.readline()
+                title_line = await process.stdout.readline()  # type: ignore[union-attr]
                 if not title_line:
                     break
                 title = title_line.decode("utf-8").strip()
 
-                url_line = await process.stdout.readline()
+                url_line = await process.stdout.readline()  # type: ignore[union-attr]
                 url = url_line.decode("utf-8").strip()
                 que = Queue(url=url, title=title)
                 print(f"Add {que}")
@@ -52,3 +53,19 @@ class PlaylistHandler:
             print(f"An error occurred: {e}")
 
         await process.wait()
+
+    async def _fetch_title_from_url(self, url: str) -> str:
+        process = await asyncio.create_subprocess_exec(
+            "yt-dlp",
+            "--get-title",
+            url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        try:
+            stdout, _ = await process.communicate()
+            title = stdout.decode("utf-8").strip()
+            return title
+        except Exception:
+            return "Unknwon"

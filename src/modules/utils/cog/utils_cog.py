@@ -21,6 +21,7 @@ class UtilsCog(Cog):
 
     @command(name="l", help="Leave the voice channel")
     async def leave(self, ctx: Context) -> None:
+        await self.bot.clear_music_queue()
         await self._utils_service.leave(
             ctx=ctx, voice_clients=cast(list[VoiceClient], self.bot.voice_clients)
         )

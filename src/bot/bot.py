@@ -19,13 +19,6 @@ class DiscordBot(Bot):
         super().__init__(command_prefix=self.command_prefix, intents=self.intents)
         self._setup_services()
 
-    async def on_ready(self) -> None:
-        if self.user:
-            await self.utils_service.on_ready(
-                user=self.user,
-                voice_clients=cast(list[VoiceClient], self.voice_clients),
-            )
-
     def _setup_services(self) -> None:
         self.music_service = MusicService()
         self.utils_service = UtilsService()
@@ -33,3 +26,13 @@ class DiscordBot(Bot):
     async def _setup_cogs(self) -> None:
         await self.add_cog(MusicCog(bot=self, music_service=self.music_service))
         await self.add_cog(UtilsCog(bot=self, utils_service=self.utils_service))
+
+    async def on_ready(self) -> None:
+        if self.user:
+            await self.utils_service.on_ready(
+                user=self.user,
+                voice_clients=cast(list[VoiceClient], self.voice_clients),
+            )
+
+    async def clear_music_queue(self) -> None:
+        await self.music_service.clear_queue()
