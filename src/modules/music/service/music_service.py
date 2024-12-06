@@ -43,7 +43,7 @@ class MusicService:
             self.logger.info("Gathering playlist")
             asyncio.create_task(
                 self._playlist_handler.get_remaining_urls_from_playlist(
-                    url=url, queue_list=self._queue_list
+                    url=url, queue_list=self._queue_list, ctx=ctx
                 )
             )
 
@@ -54,8 +54,7 @@ class MusicService:
 
         if not voice_client.is_playing():
             while not self._queue_list:
-                print("waiting for playlist gathering...")
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
             asyncio.create_task(self._process_playlist(ctx, voice_client))  # type: ignore[arg-type]
 
     async def skip(self, ctx: Context, voice_clients: list[VoiceClient]) -> None:
@@ -71,6 +70,7 @@ class MusicService:
         voice_client = discord.utils.get(voice_clients, guild=ctx.guild)
         if self._queue_list:
             voice_client.stop()
+            await ctx.send("**Queue cleared.**")
             await self.clear_queue()
             asyncio.create_task(self._process_playlist(ctx, voice_client))  # type: ignore[arg-type]
         elif not voice_client or not voice_client.is_playing():
@@ -85,7 +85,12 @@ class MusicService:
         queue_display = "\n".join(
             f"{idx + 1}. {song.title}" for idx, song in enumerate(self._queue_list)
         )
-        await ctx.send(f"**Current Queue:**\n{queue_display}")
+        try:
+            await ctx.send(f"**Current Queue:**\n{queue_display}")
+        except Exception:
+            await ctx.send(
+                f"**Current Queue is too big to show titles,length:** {len(self._queue_list)}"
+            )
 
     async def clear_queue(self) -> None:
         self._queue_list = []
@@ -96,8 +101,9 @@ class MusicService:
     async def _process_playlist(self, ctx: Context, voice_client: VoiceClient) -> None:
         while self._queue_list:
             if not voice_client.is_playing():
-                next_song = self._queue_list.pop(0)
+                next_song = self._queue_list[0]
                 await self._play(ctx=ctx, url=next_song.url, voice_client=voice_client)
+                del self._queue_list[0]
             await asyncio.sleep(2)
 
     async def _play(
@@ -135,9 +141,7 @@ class MusicService:
                                 options="-vn",
                             )
                         )
-                        await ctx.send(f'Now playing: {song["title"]}')
-                    else:
-                        print("voice_channel.is_playing()")
+                        await ctx.send(f'**Now playing:** {song["title"]}')
                 else:
                     await ctx.send(
                         "Unable to extract audio URL for the requested video. This song will be skipped."
@@ -148,19 +152,3 @@ class MusicService:
             await ctx.send(
                 f"An error occurred while trying to play the requested audio: {e}"
             )
-
-    async def _after_play(self, ctx: Context, voice_channel: VoiceClient) -> None:
-        if self._queue_list:
-            await self._play_next(ctx, voice_channel)
-        else:
-            await ctx.send("Queue is empty. Disconnecting.")
-            await voice_channel.disconnect()
-
-    async def _play_next(self, ctx: Context, voice_client: VoiceClient) -> None:
-        if not self._queue_list:
-            await ctx.send("Queue is empty. Disconnecting.")
-            await voice_client.disconnect()
-            return
-
-        next_song = self._queue_list.pop(0)
-        await self._play(ctx=ctx, url=next_song.url, voice_client=voice_client)

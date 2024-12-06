@@ -2,6 +2,7 @@ import asyncio
 from typing import NamedTuple
 
 from attrs import define
+from discord.ext.commands import Context
 
 
 class Queue(NamedTuple):
@@ -12,17 +13,11 @@ class Queue(NamedTuple):
 @define
 class PlaylistHandler:
     async def get_remaining_urls_from_playlist(
-        self,
-        url: str,
-        queue_list: list[Queue],
+        self, url: str, queue_list: list[Queue], ctx: Context
     ) -> None:
-        await self._get_urls(url=url, queue_list=queue_list)
+        await self._get_urls(url=url, queue_list=queue_list, ctx=ctx)
 
-    async def _get_urls(
-        self,
-        url: str,
-        queue_list: list[Queue],
-    ) -> None:
+    async def _get_urls(self, url: str, queue_list: list[Queue], ctx: Context) -> None:
         process = await asyncio.create_subprocess_exec(
             "yt-dlp",
             url,
@@ -40,6 +35,9 @@ class PlaylistHandler:
             while True:
                 title_line = await process.stdout.readline()  # type: ignore[union-attr]
                 if not title_line:
+                    await ctx.send(
+                        f"**Playlist gathered**, current queue length: {len(queue_list)}"
+                    )
                     break
                 title = title_line.decode("utf-8").strip()
 
