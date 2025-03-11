@@ -1,7 +1,5 @@
-from typing import cast
-
 from attrs import define, field
-from discord import Intents, VoiceClient
+from discord import Intents
 from discord.ext.commands import Bot
 
 from src.modules.music import MusicCog, MusicService
@@ -29,10 +27,7 @@ class DiscordBot(Bot):
 
     async def on_ready(self) -> None:
         if self.user:
-            await self.utils_service.on_ready(
-                user=self.user,
-                voice_clients=cast(list[VoiceClient], self.voice_clients),
-            )
+            await self.utils_service.on_ready(user=self.user)
 
     async def clear_music_queue(self) -> None:
         await self.music_service.clear_queue()

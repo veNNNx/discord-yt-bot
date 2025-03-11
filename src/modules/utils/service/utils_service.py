@@ -1,10 +1,16 @@
 # mypy: disable_error_code="attr-defined"
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from attrs import define, field
 from discord import ClientUser, VoiceClient, VoiceProtocol
 from discord import utils as discord_utils
 from discord.ext import commands, tasks
+
+if TYPE_CHECKING:
+    from src.bot import DiscordBot
 
 
 @define
@@ -14,27 +20,26 @@ class UtilsService:
 
     def __attrs_post_init__(self) -> None:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        self.check_inactivity = self._create_check_inactivity_loop()
 
-    def _create_check_inactivity_loop(self):
+    def _create_check_inactivity_loop(self, bot: DiscordBot):
         @tasks.loop(minutes=5)
-        async def loop(voice_clients: list[VoiceClient] | list[VoiceProtocol]) -> None:
+        async def loop():
+            voice_clients = [vc for vc in bot.voice_clients if not vc.is_playing()]
             for voice_channel in voice_clients:
-                if not voice_channel.is_playing():
-                    self.logger.debug(
-                        f"Bot disconnected from {voice_channel.channel.name} due to inactivity"
-                    )
-                    await voice_channel.disconnect(force=True)
+                self.logger.debug(
+                    f"Bot disconnected from {voice_channel.channel.name} due to inactivity"
+                )
+                await voice_channel.disconnect(force=True)
 
         return loop
 
-    async def on_ready(
-        self,
-        user: ClientUser,
-        voice_clients: list[VoiceClient] | list[VoiceProtocol],
-    ) -> None:
+    def start_check_inactivity(self, bot: DiscordBot):
+        self.check_inactivity = self._create_check_inactivity_loop(bot)
+        if not self.check_inactivity.is_running():
+            self.check_inactivity.start()
+
+    async def on_ready(self, user: ClientUser) -> None:
         self.logger.debug(f"Logged in as {user.name} ({user.id})")
-        self.check_inactivity.start(voice_clients=voice_clients)
 
     @staticmethod
     async def leave(

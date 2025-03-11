@@ -18,6 +18,7 @@ class UtilsCog(Cog):
     def __init__(self, bot: DiscordBot, utils_service: UtilsService):
         self.bot = bot
         self._utils_service = utils_service
+        self._utils_service.start_check_inactivity(bot=self.bot)
 
     @command(name="l", help="Leave the voice channel")
     async def leave(self, ctx: Context) -> None:
