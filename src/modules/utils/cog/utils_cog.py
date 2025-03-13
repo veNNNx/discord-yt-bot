@@ -31,5 +31,8 @@ class UtilsCog(Cog):
     @command(name="r", help="Reboot the bot")
     async def reboot(self, ctx: Context) -> None:
         await ctx.send("Restarting")
+        await self._utils_service.leave(
+            ctx=ctx, voice_clients=cast(list[VoiceClient], self.bot.voice_clients)
+        )
         script_path = Path(__file__).resolve().parent.parent / "scripts" / "restart.sh"
         subprocess.Popen([script_path], shell=True)
