@@ -4,3 +4,4 @@ __pycache__/
 .venv
 discord_bot.log*
 .vscode/
+nohup.out
