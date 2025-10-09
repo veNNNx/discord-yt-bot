@@ -27,6 +27,52 @@ class MusicCog(Cog):
             )
         )
 
+    @command(name="pl", help="Play from a memory playlist")
+    async def play_playlist(self, ctx: Context, playlist_id: int) -> None:
+        asyncio.create_task(
+            self._music_service.play_from_memory_playlist(
+                ctx=ctx, playlist_id=playlist_id, voice_clients=self.bot.voice_clients
+            )
+        )
+
+    @command(name="pl-c", help="Create a new empty playlist")
+    async def create_playlist(self, ctx: Context, name: str):
+        asyncio.create_task(
+            self._music_service._memory_playlist_handler.create_playlist(
+                ctx=ctx, name=name
+            )
+        )
+
+    @command(name="pl-a", help="Add a url to a playlist")
+    async def add_to_playlist(self, ctx: Context, playlist_id: int, url: str):
+        asyncio.create_task(
+            self._music_service._memory_playlist_handler.add_to_playlist(
+                ctx=ctx, playlist_id=playlist_id, url=url
+            )
+        )
+
+    @command(name="pl-l", help="Show all playlists")
+    async def show_playlists(self, ctx: Context):
+        asyncio.create_task(
+            self._music_service._memory_playlist_handler.show_playlists(ctx=ctx)
+        )
+
+    @command(name="pl-s", help="Show all playlists")
+    async def show_playlist_content(self, ctx: Context, playlist_id: int):
+        asyncio.create_task(
+            self._music_service._memory_playlist_handler.show_playlist_content(
+                ctx=ctx, playlist_id=playlist_id
+            )
+        )
+
+    @command(name="pl-r", help="Remove a url from a playlist")
+    async def remove_from_playlist(self, ctx: Context, playlist_id: int, track_id: int):
+        asyncio.create_task(
+            self._music_service._memory_playlist_handler.remove_from_playlist(
+                ctx=ctx, playlist_id=playlist_id, track_id=track_id
+            )
+        )
+
     @command(name="s", help="Skip the currently playing song")
     async def skip(self, ctx: Context) -> None:
         asyncio.create_task(

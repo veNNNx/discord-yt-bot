@@ -41,11 +41,12 @@ class UtilsService:
     async def on_ready(self, user: ClientUser) -> None:
         self.logger.debug(f"Logged in as {user.name} ({user.id})")
 
-    @staticmethod
     async def leave(
+        self,
         ctx: commands.Context,
         voice_clients: list[VoiceClient] | list[VoiceProtocol],
     ) -> None:
+        self.logger.info("Bot disconnecting...")
         voice_channel = discord_utils.get(voice_clients, guild=ctx.guild)
         if voice_channel and voice_channel.is_connected():
             await voice_channel.disconnect(force=True)

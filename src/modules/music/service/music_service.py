@@ -8,19 +8,23 @@ from discord import VoiceClient, VoiceProtocol
 from discord.ext.commands import Context
 from yt_dlp import YoutubeDL  # type: ignore[import-untyped]
 
-from .playlist_handler import PlaylistHandler, Queue
+from .memory_playlist_handler import MemoryPlaylistHandler
+from .yt_playlist_handler import Queue, YtPlaylistHandler
 
 
 # mypy: disable_error_code="union-attr"
 @define
 class MusicService:
-    _playlist_handler: PlaylistHandler = field(init=False)
+    _yt_playlist_handler: YtPlaylistHandler = field(init=False)
+    _memory_playlist_handler: MemoryPlaylistHandler = field(init=False)
     _queue_list: list[Queue] = field(factory=list)
+    _playlist_task: asyncio.Task | None = None
     logger: logging.Logger = field(init=False)
 
     def __attrs_post_init__(self) -> None:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        self._playlist_handler = PlaylistHandler()
+        self._yt_playlist_handler = YtPlaylistHandler()
+        self._memory_playlist_handler = MemoryPlaylistHandler()
 
     async def play(
         self,
@@ -41,14 +45,14 @@ class MusicService:
 
         if "list=" in url:
             self.logger.info("Gathering playlist")
-            asyncio.create_task(
-                self._playlist_handler.get_remaining_urls_from_playlist(
+            self._playlist_task = asyncio.create_task(
+                self._yt_playlist_handler.get_remaining_urls_from_playlist(
                     url=url, queue_list=self._queue_list, ctx=ctx
                 )
             )
 
         else:
-            title = await self._playlist_handler._fetch_title_from_url(url)
+            title = await self._yt_playlist_handler._fetch_title_from_url(url)
             self._queue_list.append(Queue(url=url, title=title))
             await ctx.send(f"Added to queue: {title or 'Unknown title'}")
 
@@ -56,6 +60,34 @@ class MusicService:
             while not self._queue_list:
                 await asyncio.sleep(1)
             asyncio.create_task(self._process_playlist(ctx, voice_client))  # type: ignore[arg-type]
+
+    async def play_from_memory_playlist(
+        self,
+        ctx: Context,
+        playlist_id: int,
+        voice_clients: list[VoiceClient | VoiceProtocol],
+    ) -> None:
+        playlist = await self._memory_playlist_handler.get_playlist_by_id(
+            playlist_id=playlist_id
+        )
+        if not playlist:
+            await ctx.send(f"Playlist with ID {playlist_id} not found.")
+            return
+
+        self.logger.info(
+            f"{ctx.author} requested to play playlist ID: {playlist_id}, title: {playlist.get('title')}"
+        )
+
+        if not playlist["data"]:
+            await ctx.send("Playlist is empty.")
+            return
+
+        await ctx.send(
+            f"Playing memory playlist '{playlist['title']}' ({len(playlist['data'])} songs)..."
+        )
+        for item in playlist["data"]:
+            url = item["url"]
+            await self.play(ctx, url, voice_clients)
 
     async def skip(self, ctx: Context, voice_clients: list[VoiceClient]) -> None:
         voice_client = discord.utils.get(voice_clients, guild=ctx.guild)
@@ -141,7 +173,7 @@ class MusicService:
                                 options="-vn",
                             )
                         )
-                        await ctx.send(f'**Now playing:** {song["title"]}')
+                        await ctx.send(f"**Now playing:** {song['title']}")
                 else:
                     await ctx.send(
                         "Unable to extract audio URL for the requested video. This song will be skipped."

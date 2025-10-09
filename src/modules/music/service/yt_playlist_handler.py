@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import NamedTuple
 
 from attrs import define
@@ -11,13 +12,14 @@ class Queue(NamedTuple):
 
 
 @define
-class PlaylistHandler:
+class YtPlaylistHandler:
     async def get_remaining_urls_from_playlist(
         self, url: str, queue_list: list[Queue], ctx: Context
     ) -> None:
         await self._get_urls(url=url, queue_list=queue_list, ctx=ctx)
 
-    async def _get_urls(self, url: str, queue_list: list[Queue], ctx: Context) -> None:
+    @staticmethod
+    async def _get_urls(url: str, queue_list: list[Queue], ctx: Context) -> None:
         process = await asyncio.create_subprocess_exec(
             "yt-dlp",
             url,
@@ -52,7 +54,8 @@ class PlaylistHandler:
 
         await process.wait()
 
-    async def _fetch_title_from_url(self, url: str) -> str:
+    @staticmethod
+    async def _fetch_title_from_url(url: str) -> str:
         process = await asyncio.create_subprocess_exec(
             "yt-dlp",
             "--get-title",
@@ -67,3 +70,21 @@ class PlaylistHandler:
             return title
         except Exception:
             return "Unknwon"
+
+    @staticmethod
+    async def _fetch_playlist_title_from_url(url: str) -> str:
+        process = await asyncio.create_subprocess_exec(
+            "yt-dlp",
+            "--dump-single-json",
+            "--flat-playlist",
+            url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        try:
+            stdout, _ = await process.communicate()
+            info = json.loads(stdout.decode("utf-8"))
+            return info.get("title", "Unknown playlist")
+        except Exception:
+            return "Unknown playlist"

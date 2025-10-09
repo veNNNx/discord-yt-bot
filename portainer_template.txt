@@ -3,10 +3,12 @@ version: '3'
 services:
   my-discord-bot:
     image: discord-music-bot:latest
-
+    restart: always
     networks:
       - discord-network
-    restart: always
+    volumes:
+      - /mnt/data/discord-yt-bot/src/modules/music/static:/usr/src/app/src/modules/music/static
+
 
 networks:
   discord-network:
