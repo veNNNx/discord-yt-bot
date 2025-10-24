@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from random import shuffle
 
 import discord
@@ -53,8 +54,9 @@ class MusicService:
 
         else:
             title = await self._yt_playlist_handler._fetch_title_from_url(url)
+            title = title if title else "Unknown title"
             self._queue_list.append(Queue(url=url, title=title))
-            await ctx.send(f"Added to queue: {title or 'Unknown title'}")
+            await ctx.send(f"Added to queue: {title}")
 
         if not voice_client.is_playing():
             while not self._queue_list:
@@ -90,6 +92,7 @@ class MusicService:
             await self.play(ctx, url, voice_clients)
 
     async def skip(self, ctx: Context, voice_clients: list[VoiceClient]) -> None:
+        self.logger.info("Skipping")
         voice_client = discord.utils.get(voice_clients, guild=ctx.guild)
         if self._queue_list:
             voice_client.stop()
@@ -138,49 +141,142 @@ class MusicService:
                 del self._queue_list[0]
             await asyncio.sleep(2)
 
+    # async def _play(
+    #     self,
+    #     ctx: Context,
+    #     url: str,
+    #     voice_client: VoiceClient,
+    # ) -> None:
+    #     def after_playing(error):
+    #         if error:
+    #             asyncio.run_coroutine_threadsafe(
+    #                 ctx.send(f"Stream interrupted for: {song['title']} — retrying..."),
+    #                 ctx.bot.loop,
+    #             )
+    #             asyncio.run_coroutine_threadsafe(
+    #                 self._play(ctx, url, voice_client), ctx.bot.loop
+    #             )
+    #         else:
+    #             asyncio.run_coroutine_threadsafe(
+    #                 ctx.send(f"Finished playing: {song['title']}"), ctx.bot.loop
+    #             )
+
+    #     ydl_opts = {
+    #         "format": "251/bestaudio/best",
+    #         "quiet": True,
+    #         "noplaylist": True,
+    #         "extractor_args": {"youtube": {"player_client": ["android"]}},
+    #         "downloader_args": {
+    #             "ffmpeg_i": [
+    #                 "-reconnect",
+    #                 "1",
+    #                 "-reconnect_streamed",
+    #                 "1",
+    #                 "-reconnect_delay_max",
+    #                 "5",
+    #                 "-err_detect",
+    #                 "ignore_err",
+    #                 "-timeout",
+    #                 "5000000",
+    #             ]
+    #         },
+    #     }
+
+    #     ffmpeg_before_opts = (
+    #         "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
+    #         "-reconnect_at_eof 1 -err_detect ignore_err -timeout 5000000 -nostdin"
+    #     )
+
+    #     try:
+    #         with YoutubeDL(ydl_opts) as ydl:
+    #             song = ydl.extract_info(url, download=False)
+    #             audio_url = next(
+    #                 (
+    #                     fmt["url"]
+    #                     for fmt in song["formats"]
+    #                     if fmt.get("acodec") != "none"
+    #                 ),
+    #                 None,
+    #             )
+    #             if audio_url:
+    #                 if not voice_client.is_playing():
+    #                     voice_client.play(
+    #                         discord.FFmpegPCMAudio(
+    #                             audio_url,
+    #                             # before_options="-nostdin",
+    #                             before_options=ffmpeg_before_opts,
+    #                             options="-vn",
+    #                         ),
+    #                         after=after_playing,
+    #                     )
+    #                     await ctx.send(f"**Now playing:** {song['title']}")
+    #             else:
+    #                 await ctx.send(
+    #                     f"Unable to extract audio URL for the requested video. This song will be skipped. {song['title']}"
+    #                 )
+
+    #     except Exception as e:
+    #         self.logger.error(f"Error while playing audio: {e}")
+    #         await ctx.send(
+    #             f"An error occurred while trying to play the requested audio: {e}"
+    #         )
     async def _play(
         self,
         ctx: Context,
         url: str,
         voice_client: VoiceClient,
     ) -> None:
+        downloads_dir = "./downloads"
+        os.makedirs(downloads_dir, exist_ok=True)
+
         ydl_opts = {
             "format": "bestaudio/best",
             "quiet": True,
-            "extractor-args": "youtube:player_client=web",
-            "audioformat": "mp3",
-            "playlistend": 300,
+            "noplaylist": True,
+            "outtmpl": os.path.join(downloads_dir, "%(title)s.%(ext)s"),
+            "extractor_args": {"youtube": {"player_client": ["android"]}},
         }
 
         try:
             with YoutubeDL(ydl_opts) as ydl:
-                song = ydl.extract_info(url, download=False)
-                audio_url = next(
-                    (
-                        fmt["url"]
-                        for fmt in song["formats"]
-                        if fmt.get("acodec") != "none"
-                    ),
-                    None,
+                info = ydl.extract_info(url, download=True)
+                file_path = ydl.prepare_filename(info)
+                title = info.get("title", "Unknown Title")
+
+            if not os.path.exists(file_path):
+                await ctx.send(f"Failed to download: {title}")
+                return
+
+            async def after_playing_wrapper(error):
+                try:
+                    if error:
+                        await ctx.send(f"Error while playing {title}: {error}")
+                finally:
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            self.logger.info(f"Deleted file: {file_path}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to remove file {file_path}: {e}")
+
+                    if self._queue_list:
+                        asyncio.create_task(self._process_playlist(ctx, voice_client))
+
+            def _after_playing(error):
+                asyncio.run_coroutine_threadsafe(
+                    after_playing_wrapper(error),
+                    ctx.bot.loop,
                 )
 
-                if audio_url:
-                    if not voice_client.is_playing():
-                        voice_client.play(
-                            discord.FFmpegPCMAudio(
-                                audio_url,
-                                before_options="-nostdin",
-                                options="-vn",
-                            )
-                        )
-                        await ctx.send(f"**Now playing:** {song['title']}")
-                else:
-                    await ctx.send(
-                        "Unable to extract audio URL for the requested video. This song will be skipped."
-                    )
+            if not voice_client.is_playing():
+                source = discord.FFmpegPCMAudio(
+                    file_path,
+                    before_options="-nostdin",
+                    options="-vn",
+                )
+                voice_client.play(source, after=_after_playing)
+                await ctx.send(f"**Now playing:** {title}")
 
         except Exception as e:
-            self.logger.error(f"Error while playing audio: {e}")
-            await ctx.send(
-                f"An error occurred while trying to play the requested audio: {e}"
-            )
+            await ctx.send(f"Failed to download or play: {e}")
+            self.logger.error(f"Error while playing {url}: {e}")
