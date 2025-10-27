@@ -5,3 +5,5 @@ __pycache__/
 discord_bot.log*
 .vscode/
 nohup.out
+downloads
+src/modules/music/static/
