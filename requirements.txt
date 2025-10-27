@@ -8,8 +8,11 @@ certifi==2025.10.5
 cffi==2.0.0
 charset-normalizer==3.4.3
 discord.py==2.6.4
+ffmpeg-python==0.2.0
 frozenlist==1.8.0
+future==1.0.0
 idna==3.10
+imageio-ffmpeg==0.6.0
 multidict==6.7.0
 mutagen==1.47.0
 mypy==1.18.2
@@ -29,4 +32,4 @@ typing_extensions==4.15.0
 urllib3==2.5.0
 websockets==15.0.1
 yarl==1.22.0
-yt-dlp==2025.9.26
+yt-dlp==2025.10.22.232844.dev0

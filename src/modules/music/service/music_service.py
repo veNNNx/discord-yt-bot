@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from random import shuffle
+from urllib.parse import urlparse
 
 import discord
 from attrs import define, field
@@ -34,6 +35,10 @@ class MusicService:
         voice_clients: list[VoiceClient | VoiceProtocol],
     ) -> None:
         self.logger.info(f"{ctx.author} requested to play URL: {url}")
+        if not await self._is_valid_url(url):
+            await ctx.send(f"Not a valid URL: '{url}'. Skipping.")
+            self.logger.warning(f"Invalid URL provided: {url}")
+            return
 
         if ctx.author.voice is None:
             await ctx.send("You need to be in a voice channel to play music.")
@@ -140,6 +145,13 @@ class MusicService:
                 await self._play(ctx=ctx, url=next_song.url, voice_client=voice_client)
                 del self._queue_list[0]
             await asyncio.sleep(2)
+
+    async def _is_valid_url(self, url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+            return all([parsed.scheme, parsed.netloc])
+        except Exception:
+            return False
 
     # async def _play(
     #     self,
@@ -278,5 +290,6 @@ class MusicService:
                 await ctx.send(f"**Now playing:** {title}")
 
         except Exception as e:
+            print(self._queue_list)
             await ctx.send(f"Failed to download or play: {e}")
             self.logger.error(f"Error while playing {url}: {e}")
