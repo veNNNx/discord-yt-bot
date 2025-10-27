@@ -43,6 +43,14 @@ class MusicCog(Cog):
             )
         )
 
+    @command(name="pl-d", help="Delete the playlist")
+    async def delete_playlist(self, ctx: Context, id: int):
+        asyncio.create_task(
+            self._music_service._memory_playlist_handler.delete_playlist(
+                ctx=ctx, playlist_id=id
+            )
+        )
+
     @command(name="pl-a", help="Add a url to a playlist")
     async def add_to_playlist(self, ctx: Context, playlist_id: int, url: str):
         asyncio.create_task(

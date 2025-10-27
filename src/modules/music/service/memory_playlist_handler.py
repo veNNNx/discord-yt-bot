@@ -49,6 +49,29 @@ class MemoryPlaylistHandler:
             details={"playlist_id": new_id + 1, "title": name},
         )
 
+    async def delete_playlist(self, ctx: Context, playlist_id: int):
+        playlists = self._load_playlists()
+        json_playlist_id = playlist_id - 1
+
+        if json_playlist_id < 0 or json_playlist_id >= len(playlists):
+            await ctx.send(f"Playlist with ID {playlist_id} not found.")
+            return
+
+        removed = playlists.pop(json_playlist_id)
+
+        for new_idx, playlist in enumerate(playlists):
+            playlist["id"] = new_idx
+
+        self._save_playlists(playlists)
+
+        await ctx.send(f"Playlist '{removed['title']}' has been deleted.")
+
+        self._log_change(
+            user=str(ctx.author),
+            action="DELETE_PLAYLIST",
+            details={"deleted_title": removed["title"], "deleted_id": playlist_id},
+        )
+
     async def add_to_playlist(self, ctx: Context, playlist_id: int, url: str):
         playlists = self._load_playlists()
         json_playlist_id = playlist_id - 1

@@ -51,6 +51,7 @@ class UtilsCog(Cog):
             name="Memory playlist controls",
             value=(
                 "`!pl-c <name>` — Create a new empty memory playlist\n"
+                "`!pl-d <playlist_id>` — Remove a memory playlist\n"
                 "`!pl-a <playlist_id> <url>` — Add a YouTube URL to a memory playlist\n"
                 "`!pl-l` — List all saved playlists\n"
                 "`!pl-s <playlist_id>` — Show all songs in a memory playlist\n"
