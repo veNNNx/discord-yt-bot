@@ -21,6 +21,7 @@ class MusicService:
     _memory_playlist_handler: MemoryPlaylistHandler = field(init=False)
     _queue_list: list[Queue] = field(factory=list)
     _playlist_task: asyncio.Task | None = None
+    _downloads_dir = "./downloads"
     logger: logging.Logger = field(init=False)
 
     def __attrs_post_init__(self) -> None:
@@ -142,6 +143,7 @@ class MusicService:
         while self._queue_list:
             if not voice_client.is_playing():
                 next_song = self._queue_list[0]
+                asyncio.create_task(self._prefetch_next_song())
                 await self._play(ctx=ctx, url=next_song.url, voice_client=voice_client)
                 del self._queue_list[0]
             await asyncio.sleep(2)
@@ -152,6 +154,53 @@ class MusicService:
             return all([parsed.scheme, parsed.netloc])
         except Exception:
             return False
+
+    async def _prefetch_next_song(self) -> None:
+        if len(self._queue_list) < 2:
+            return
+
+        next_song = self._queue_list[1]
+
+        try:
+            await self._download_audio_file(next_song.url)
+            self.logger.info(f"Prefetched next song: {next_song.title}")
+        except Exception as e:
+            self.logger.warning(f"Prefetch failed for {next_song.url}: {e}")
+
+    async def _download_audio_file(self, url: str) -> tuple[str, str]:
+        os.makedirs(self._downloads_dir, exist_ok=True)
+
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "quiet": True,
+            "noplaylist": True,
+            "outtmpl": os.path.join(self._downloads_dir, "%(title)s.%(ext)s"),
+            "extractor_args": {"youtube": {"player_client": ["android"]}},
+        }
+
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                file_path = ydl.prepare_filename(info)
+                title = info.get("title", "Unknown Title")
+
+                if os.path.exists(file_path):
+                    self.logger.debug(f"Using cached file: {file_path}")
+                    return file_path, title
+
+                self.logger.info(f"Downloading {title} ...")
+                ydl.download([url])
+
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(
+                        f"File not found after download: {file_path}"
+                    )
+
+                return file_path, title
+
+        except Exception as e:
+            self.logger.error(f"Error downloading {url}: {e}")
+            raise
 
     # async def _play(
     #     self,
@@ -238,26 +287,8 @@ class MusicService:
         url: str,
         voice_client: VoiceClient,
     ) -> None:
-        downloads_dir = "./downloads"
-        os.makedirs(downloads_dir, exist_ok=True)
-
-        ydl_opts = {
-            "format": "bestaudio/best",
-            "quiet": True,
-            "noplaylist": True,
-            "outtmpl": os.path.join(downloads_dir, "%(title)s.%(ext)s"),
-            "extractor_args": {"youtube": {"player_client": ["android"]}},
-        }
-
         try:
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                file_path = ydl.prepare_filename(info)
-                title = info.get("title", "Unknown Title")
-
-            if not os.path.exists(file_path):
-                await ctx.send(f"Failed to download: {title}")
-                return
+            file_path, title = await self._download_audio_file(url)
 
             async def after_playing_wrapper(error):
                 try:
@@ -290,6 +321,5 @@ class MusicService:
                 await ctx.send(f"**Now playing:** {title}")
 
         except Exception as e:
-            print(self._queue_list)
             await ctx.send(f"Failed to download or play: {e}")
             self.logger.error(f"Error while playing {url}: {e}")
