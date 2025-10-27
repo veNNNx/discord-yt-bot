@@ -7,3 +7,4 @@ discord_bot.log*
 nohup.out
 downloads
 src/modules/music/static/*
+!src/modules/music/static/.gitkeep
