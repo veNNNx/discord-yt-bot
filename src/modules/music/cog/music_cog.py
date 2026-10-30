@@ -95,9 +95,21 @@ class MusicCog(Cog):
             self._music_service.skip_all(ctx=ctx, voice_clients=self.bot.voice_clients)  # type: ignore[arg-type]
         )
 
+    @command(name="pause", help="Pause playback")
+    async def pause(self, ctx: Context) -> None:
+        asyncio.create_task(self._music_service.pause(ctx=ctx))
+
+    @command(name="resume", help="Resume playback")
+    async def resume(self, ctx: Context) -> None:
+        asyncio.create_task(self._music_service.resume(ctx=ctx))
+
+    @command(name="panel", help="Show the player panel in this channel")
+    async def now_playing(self, ctx: Context) -> None:
+        asyncio.create_task(self._music_service.panel(ctx=ctx))
+
     @command(name="mix", help="Shuffle playlist")
     async def mix(self, ctx: Context) -> None:
-        asyncio.create_task(self._music_service.mix_playlist())
+        asyncio.create_task(self._music_service.mix_and_refresh())
 
     @command(name="q", help="Show the current music queue")
     async def show_queue(self, ctx: Context) -> None:

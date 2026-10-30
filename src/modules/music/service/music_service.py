@@ -11,6 +11,7 @@ from discord.ext.commands import Context
 from yt_dlp import YoutubeDL  # type: ignore[import-untyped]
 
 from .memory_playlist_handler import MemoryPlaylistHandler
+from .player_panel import PlayerPanel
 from .yt_playlist_handler import Queue, YtPlaylistHandler
 
 
@@ -24,6 +25,8 @@ class MusicService:
     _player_task: asyncio.Task | None = field(init=False, default=None)
     _current_song: Queue | None = field(init=False, default=None)
     _downloads: dict[str, asyncio.Task] = field(init=False, factory=dict)
+    _panel: PlayerPanel = field(init=False)
+    _panel_channel: discord.abc.Messageable | None = field(init=False, default=None)
     _downloads_dir = "./downloads"
     logger: logging.Logger = field(init=False)
 
@@ -31,6 +34,7 @@ class MusicService:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self._yt_playlist_handler = YtPlaylistHandler()
         self._memory_playlist_handler = MemoryPlaylistHandler()
+        self._panel = PlayerPanel(self)
 
     async def play(
         self,
@@ -50,6 +54,7 @@ class MusicService:
 
         channel = ctx.author.voice.channel
         voice_client = await self._ensure_voice_client(ctx, channel)
+        self._panel_channel = ctx.channel
 
         if "list=" in url:
             self.logger.info("Gathering playlist")
@@ -66,6 +71,7 @@ class MusicService:
             await ctx.send(f"Added to queue: {title}")
 
         self._ensure_player(ctx, voice_client)
+        await self.refresh_panel()
 
     async def _ensure_voice_client(self, ctx: Context, channel) -> VoiceClient:
         voice_client = ctx.guild.voice_client
@@ -120,6 +126,63 @@ class MusicService:
             url = item["url"]
             await self.play(ctx, url, voice_clients)
 
+    def _skip_core(self, guild, count: int) -> list[str] | None:
+        """Skip the current song plus count-1 queued ones. None if nothing plays."""
+        voice_client = guild.voice_client if guild else None
+        if not voice_client or not (
+            voice_client.is_playing() or voice_client.is_paused()
+        ):
+            return None
+        titles = [self._current_song.title if self._current_song else "current song"]
+        removed = self._queue_list[: count - 1]
+        del self._queue_list[: count - 1]
+        titles.extend(song.title for song in removed)
+        voice_client.stop()
+        return titles
+
+    async def skip_songs(self, guild, count: int, user=None) -> None:
+        """Skip from the panel and announce who skipped what."""
+        titles = self._skip_core(guild, count)
+        if titles is None or self._panel_channel is None:
+            return
+        who = user.display_name if user else "Someone"
+        listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(titles))
+        await self._panel_channel.send(
+            f"**Skipped {len(titles)} song(s)** (requested by {who}):\n{listing}"
+        )
+
+    async def toggle_pause(self, guild) -> None:
+        voice_client = guild.voice_client if guild else None
+        if not voice_client:
+            return
+        if voice_client.is_paused():
+            voice_client.resume()
+        elif voice_client.is_playing():
+            voice_client.pause()
+        await self.refresh_panel()
+
+    async def pause(self, ctx: Context) -> None:
+        voice_client = ctx.guild.voice_client
+        if not voice_client or not voice_client.is_playing():
+            await ctx.send("No song is currently playing.")
+            return
+        await self.toggle_pause(ctx.guild)
+
+    async def resume(self, ctx: Context) -> None:
+        voice_client = ctx.guild.voice_client
+        if not voice_client or not voice_client.is_paused():
+            await ctx.send("Playback is not paused.")
+            return
+        await self.toggle_pause(ctx.guild)
+
+    async def refresh_panel(self, status: str | None = None) -> None:
+        if self._panel_channel is not None:
+            await self._panel.update(self._panel_channel, status)
+
+    async def panel(self, ctx: Context) -> None:
+        self._panel_channel = ctx.channel
+        await self._panel.update(ctx.channel)
+
     async def skip(
         self, ctx: Context, voice_clients: list[VoiceClient], count: int = 1
     ) -> None:
@@ -127,21 +190,14 @@ class MusicService:
         if count < 1:
             await ctx.send("Number of songs to skip must be at least 1.")
             return
-        voice_client = ctx.guild.voice_client
-        if not voice_client or not (
-            voice_client.is_playing() or voice_client.is_paused()
-        ):
+        titles = self._skip_core(ctx.guild, count)
+        if titles is None:
             await ctx.send("No song is currently playing.")
             return
-        titles = [self._current_song.title if self._current_song else "current song"]
-        removed = self._queue_list[: count - 1]
-        del self._queue_list[: count - 1]
-        titles.extend(song.title for song in removed)
         listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(titles))
         await ctx.send(
             f"**Skipped {len(titles)} song(s)** (requested by {ctx.author.display_name}):\n{listing}"
         )
-        voice_client.stop()
 
     async def skip_all(self, ctx: Context, voice_clients: list[VoiceClient]) -> None:
         voice_client = ctx.guild.voice_client
@@ -152,9 +208,12 @@ class MusicService:
             await ctx.send("No song is currently playing.")
             return
         await self.clear_queue()
-        await ctx.send(f"**Queue cleared** Skipping all songs.")
+        await ctx.send(
+            f"**Queue cleared** (requested by {ctx.author.display_name}). Skipping all songs."
+        )
         if playing:
             voice_client.stop()
+        await self.refresh_panel()
 
     async def show_queue(self, ctx: Context) -> None:
         if not self._queue_list:
@@ -192,9 +251,14 @@ class MusicService:
                 await voice_client.disconnect(force=True)
             except Exception as e:
                 self.logger.warning(f"Error during hard reset: {e}")
+        await self.refresh_panel(status="Stopped.")
 
     async def mix_playlist(self) -> None:
         shuffle(self._queue_list)
+
+    async def mix_and_refresh(self) -> None:
+        await self.mix_playlist()
+        await self.refresh_panel()
 
     async def _player_loop(self, ctx: Context, channel) -> None:
         """Single consumer of the queue; the only place that plays songs."""
@@ -208,6 +272,7 @@ class MusicService:
 
                 song = self._queue_list.pop(0)
                 self._current_song = song
+                await self.refresh_panel()
 
                 voice_client = await self._get_connected_client(ctx, channel)
                 if voice_client is None:
@@ -222,6 +287,7 @@ class MusicService:
                 self._current_song = None
         finally:
             self._current_song = None
+            await self.refresh_panel(status="Queue finished.")
 
     async def _get_connected_client(self, ctx: Context, channel) -> VoiceClient | None:
         for attempt in range(3):
@@ -336,7 +402,7 @@ class MusicService:
                 file_path, before_options="-nostdin", options="-vn"
             )
             voice_client.play(source, after=_after_playing)
-            await ctx.send(f"**Now playing:** {title}")
+            await self.refresh_panel()
             error = await finished
             if error:
                 await ctx.send(f"Error while playing {title}: {error}")

@@ -68,6 +68,8 @@ class UtilsCog(Cog):
                 "`!q` — Show current music queue\n"
                 "`!s [count]` — Skip the current song (or the next `count` songs)\n"
                 "`!sa` — Skip all songs\n"
+                "`!pause` / `!resume` — Pause or resume playback\n"
+                "`!panel` — Show the player panel with buttons\n"
                 "`!mix` — Shuffle the current queue"
             ),
             inline=False,
