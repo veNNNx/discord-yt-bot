@@ -81,10 +81,12 @@ class MusicCog(Cog):
             )
         )
 
-    @command(name="s", help="Skip the currently playing song")
-    async def skip(self, ctx: Context) -> None:
+    @command(name="s", help="Skip the current song, or the next <count> songs")
+    async def skip(self, ctx: Context, count: int = 1) -> None:
         asyncio.create_task(
-            self._music_service.skip(ctx=ctx, voice_clients=self.bot.voice_clients)  # type: ignore[arg-type]
+            self._music_service.skip(
+                ctx=ctx, voice_clients=self.bot.voice_clients, count=count  # type: ignore[arg-type]
+            )
         )
 
     @command(name="sa", help="Skip all")

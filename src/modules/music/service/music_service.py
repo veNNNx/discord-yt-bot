@@ -21,6 +21,9 @@ class MusicService:
     _memory_playlist_handler: MemoryPlaylistHandler = field(init=False)
     _queue_list: list[Queue] = field(factory=list)
     _playlist_task: asyncio.Task | None = None
+    _player_task: asyncio.Task | None = field(init=False, default=None)
+    _current_song: Queue | None = field(init=False, default=None)
+    _downloads: dict[str, asyncio.Task] = field(init=False, factory=dict)
     _downloads_dir = "./downloads"
     logger: logging.Logger = field(init=False)
 
@@ -46,9 +49,7 @@ class MusicService:
             return
 
         channel = ctx.author.voice.channel
-        voice_client = discord.utils.get(voice_clients, guild=ctx.guild)
-        if not voice_client:
-            voice_client = await channel.connect()
+        voice_client = await self._ensure_voice_client(ctx, channel)
 
         if "list=" in url:
             self.logger.info("Gathering playlist")
@@ -64,10 +65,32 @@ class MusicService:
             self._queue_list.append(Queue(url=url, title=title))
             await ctx.send(f"Added to queue: {title}")
 
-        if not voice_client.is_playing():
-            while not self._queue_list:
-                await asyncio.sleep(1)
-            asyncio.create_task(self._process_playlist(ctx, voice_client))  # type: ignore[arg-type]
+        self._ensure_player(ctx, voice_client)
+
+    async def _ensure_voice_client(self, ctx: Context, channel) -> VoiceClient:
+        voice_client = ctx.guild.voice_client
+        if voice_client is not None and not voice_client.is_connected():
+            try:
+                await voice_client.disconnect(force=True)
+            except Exception as e:
+                self.logger.warning(f"Failed to drop stale voice client: {e}")
+            voice_client = None
+        if voice_client is None:
+            return await channel.connect()
+        return voice_client
+
+    def _ensure_player(self, ctx: Context, voice_client: VoiceClient) -> None:
+        if self._player_task is None or self._player_task.done():
+            self._player_task = asyncio.create_task(
+                self._player_loop(ctx, voice_client.channel)
+            )
+
+    def is_busy(self) -> bool:
+        return bool(
+            self._queue_list
+            or self._current_song
+            or (self._player_task and not self._player_task.done())
+        )
 
     async def play_from_memory_playlist(
         self,
@@ -97,26 +120,41 @@ class MusicService:
             url = item["url"]
             await self.play(ctx, url, voice_clients)
 
-    async def skip(self, ctx: Context, voice_clients: list[VoiceClient]) -> None:
-        self.logger.info("Skipping")
-        voice_client = discord.utils.get(voice_clients, guild=ctx.guild)
-        if self._queue_list:
-            voice_client.stop()
-            asyncio.create_task(self._process_playlist(ctx, voice_client))  # type: ignore[arg-type]
-        elif not voice_client or not voice_client.is_playing():
+    async def skip(
+        self, ctx: Context, voice_clients: list[VoiceClient], count: int = 1
+    ) -> None:
+        self.logger.info(f"Skipping {count}")
+        if count < 1:
+            await ctx.send("Number of songs to skip must be at least 1.")
+            return
+        voice_client = ctx.guild.voice_client
+        if not voice_client or not (
+            voice_client.is_playing() or voice_client.is_paused()
+        ):
             await ctx.send("No song is currently playing.")
             return
+        titles = [self._current_song.title if self._current_song else "current song"]
+        removed = self._queue_list[: count - 1]
+        del self._queue_list[: count - 1]
+        titles.extend(song.title for song in removed)
+        listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(titles))
+        await ctx.send(
+            f"**Skipped {len(titles)} song(s)** (requested by {ctx.author.display_name}):\n{listing}"
+        )
+        voice_client.stop()
 
     async def skip_all(self, ctx: Context, voice_clients: list[VoiceClient]) -> None:
-        voice_client = discord.utils.get(voice_clients, guild=ctx.guild)
-        if self._queue_list:
-            voice_client.stop()
-            await ctx.send("**Queue cleared.**")
-            await self.clear_queue()
-            asyncio.create_task(self._process_playlist(ctx, voice_client))  # type: ignore[arg-type]
-        elif not voice_client or not voice_client.is_playing():
+        voice_client = ctx.guild.voice_client
+        playing = bool(
+            voice_client and (voice_client.is_playing() or voice_client.is_paused())
+        )
+        if not self._queue_list and not playing:
             await ctx.send("No song is currently playing.")
             return
+        await self.clear_queue()
+        await ctx.send(f"**Queue cleared** Skipping all songs.")
+        if playing:
+            voice_client.stop()
 
     async def show_queue(self, ctx: Context) -> None:
         if not self._queue_list:
@@ -134,19 +172,72 @@ class MusicService:
             )
 
     async def clear_queue(self) -> None:
-        self._queue_list = []
+        if self._playlist_task and not self._playlist_task.done():
+            self._playlist_task.cancel()
+        self._queue_list.clear()
+
+    async def hard_reset(self, guild) -> None:
+        """Stop everything: playlist gathering, player loop, playback, downloads."""
+        await self.clear_queue()
+        for task in (self._player_task, *self._downloads.values()):
+            if task and not task.done():
+                task.cancel()
+        self._player_task = None
+        self._downloads.clear()
+        self._current_song = None
+        voice_client = guild.voice_client if guild else None
+        if voice_client:
+            try:
+                voice_client.stop()
+                await voice_client.disconnect(force=True)
+            except Exception as e:
+                self.logger.warning(f"Error during hard reset: {e}")
 
     async def mix_playlist(self) -> None:
         shuffle(self._queue_list)
 
-    async def _process_playlist(self, ctx: Context, voice_client: VoiceClient) -> None:
-        while self._queue_list:
-            if not voice_client.is_playing():
-                next_song = self._queue_list[0]
+    async def _player_loop(self, ctx: Context, channel) -> None:
+        """Single consumer of the queue; the only place that plays songs."""
+        try:
+            while True:
+                if not self._queue_list:
+                    if self._playlist_task and not self._playlist_task.done():
+                        await asyncio.sleep(1)
+                        continue
+                    break
+
+                song = self._queue_list.pop(0)
+                self._current_song = song
+
+                voice_client = await self._get_connected_client(ctx, channel)
+                if voice_client is None:
+                    await ctx.send(
+                        f"**Skipped:** {song.title} (reason: could not connect to the voice channel)"
+                    )
+                    self._queue_list.clear()
+                    break
+
                 asyncio.create_task(self._prefetch_next_song())
-                await self._play(ctx=ctx, url=next_song.url, voice_client=voice_client)
-                del self._queue_list[0]
-            await asyncio.sleep(2)
+                await self._play(ctx=ctx, song=song, voice_client=voice_client)
+                self._current_song = None
+        finally:
+            self._current_song = None
+
+    async def _get_connected_client(self, ctx: Context, channel) -> VoiceClient | None:
+        for attempt in range(3):
+            voice_client = ctx.guild.voice_client
+            if voice_client is not None and voice_client.is_connected():
+                return voice_client
+            try:
+                if voice_client is not None:
+                    await voice_client.disconnect(force=True)
+                return await channel.connect()
+            except Exception as e:
+                self.logger.warning(
+                    f"Voice reconnect attempt {attempt + 1} failed: {e}"
+                )
+                await asyncio.sleep(2)
+        return None
 
     async def _is_valid_url(self, url: str) -> bool:
         try:
@@ -156,10 +247,10 @@ class MusicService:
             return False
 
     async def _prefetch_next_song(self) -> None:
-        if len(self._queue_list) < 2:
+        if not self._queue_list:
             return
 
-        next_song = self._queue_list[1]
+        next_song = self._queue_list[0]
 
         try:
             await self._download_audio_file(next_song.url)
@@ -168,6 +259,15 @@ class MusicService:
             self.logger.warning(f"Prefetch failed for {next_song.url}: {e}")
 
     async def _download_audio_file(self, url: str) -> tuple[str, str]:
+        """Download in a worker thread; concurrent requests for a URL share one task."""
+        task = self._downloads.get(url)
+        if task is None or task.done():
+            task = asyncio.create_task(asyncio.to_thread(self._download_blocking, url))
+            self._downloads[url] = task
+            task.add_done_callback(lambda _t, u=url: self._downloads.pop(u, None))
+        return await asyncio.shield(task)
+
+    def _download_blocking(self, url: str) -> tuple[str, str]:
         os.makedirs(self._downloads_dir, exist_ok=True)
 
         ydl_opts = {
@@ -202,124 +302,55 @@ class MusicService:
             self.logger.error(f"Error downloading {url}: {e}")
             raise
 
-    # async def _play(
-    #     self,
-    #     ctx: Context,
-    #     url: str,
-    #     voice_client: VoiceClient,
-    # ) -> None:
-    #     def after_playing(error):
-    #         if error:
-    #             asyncio.run_coroutine_threadsafe(
-    #                 ctx.send(f"Stream interrupted for: {song['title']} — retrying..."),
-    #                 ctx.bot.loop,
-    #             )
-    #             asyncio.run_coroutine_threadsafe(
-    #                 self._play(ctx, url, voice_client), ctx.bot.loop
-    #             )
-    #         else:
-    #             asyncio.run_coroutine_threadsafe(
-    #                 ctx.send(f"Finished playing: {song['title']}"), ctx.bot.loop
-    #             )
-
-    #     ydl_opts = {
-    #         "format": "251/bestaudio/best",
-    #         "quiet": True,
-    #         "noplaylist": True,
-    #         "extractor_args": {"youtube": {"player_client": ["android"]}},
-    #         "downloader_args": {
-    #             "ffmpeg_i": [
-    #                 "-reconnect",
-    #                 "1",
-    #                 "-reconnect_streamed",
-    #                 "1",
-    #                 "-reconnect_delay_max",
-    #                 "5",
-    #                 "-err_detect",
-    #                 "ignore_err",
-    #                 "-timeout",
-    #                 "5000000",
-    #             ]
-    #         },
-    #     }
-
-    #     ffmpeg_before_opts = (
-    #         "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
-    #         "-reconnect_at_eof 1 -err_detect ignore_err -timeout 5000000 -nostdin"
-    #     )
-
-    #     try:
-    #         with YoutubeDL(ydl_opts) as ydl:
-    #             song = ydl.extract_info(url, download=False)
-    #             audio_url = next(
-    #                 (
-    #                     fmt["url"]
-    #                     for fmt in song["formats"]
-    #                     if fmt.get("acodec") != "none"
-    #                 ),
-    #                 None,
-    #             )
-    #             if audio_url:
-    #                 if not voice_client.is_playing():
-    #                     voice_client.play(
-    #                         discord.FFmpegPCMAudio(
-    #                             audio_url,
-    #                             # before_options="-nostdin",
-    #                             before_options=ffmpeg_before_opts,
-    #                             options="-vn",
-    #                         ),
-    #                         after=after_playing,
-    #                     )
-    #                     await ctx.send(f"**Now playing:** {song['title']}")
-    #             else:
-    #                 await ctx.send(
-    #                     f"Unable to extract audio URL for the requested video. This song will be skipped. {song['title']}"
-    #                 )
-
-    #     except Exception as e:
-    #         self.logger.error(f"Error while playing audio: {e}")
-    #         await ctx.send(
-    #             f"An error occurred while trying to play the requested audio: {e}"
-    #         )
     async def _play(
         self,
         ctx: Context,
-        url: str,
+        song: Queue,
         voice_client: VoiceClient,
     ) -> None:
         try:
-            file_path, title = await self._download_audio_file(url)
-
-            async def after_playing_wrapper(error):
-                try:
-                    if error:
-                        await ctx.send(f"Error while playing {title}: {error}")
-                finally:
-                    try:
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                            self.logger.info(f"Deleted file: {file_path}")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to remove file {file_path}: {e}")
-
-                    if self._queue_list:
-                        asyncio.create_task(self._process_playlist(ctx, voice_client))
-
-            def _after_playing(error):
-                asyncio.run_coroutine_threadsafe(
-                    after_playing_wrapper(error),
-                    ctx.bot.loop,
-                )
-
-            if not voice_client.is_playing():
-                source = discord.FFmpegPCMAudio(
-                    file_path,
-                    before_options="-nostdin",
-                    options="-vn",
-                )
-                voice_client.play(source, after=_after_playing)
-                await ctx.send(f"**Now playing:** {title}")
-
+            file_path, title = await self._download_audio_file(song.url)
         except Exception as e:
-            await ctx.send(f"Failed to download or play: {e}")
-            self.logger.error(f"Error while playing {url}: {e}")
+            self.logger.error(f"Error while downloading {song.url}: {e}")
+            await ctx.send(f"**Skipped:** {song.title} (reason: download failed: {e})")
+            return
+
+        if not voice_client.is_connected():
+            voice_client = await self._get_connected_client(ctx, voice_client.channel)
+            if voice_client is None:
+                await ctx.send(
+                    f"**Skipped:** {song.title} (reason: lost connection to the voice channel)"
+                )
+                return
+
+        loop = asyncio.get_running_loop()
+        finished: asyncio.Future = loop.create_future()
+
+        def _after_playing(error):
+            loop.call_soon_threadsafe(
+                lambda: finished.done() or finished.set_result(error)
+            )
+
+        try:
+            source = discord.FFmpegPCMAudio(
+                file_path, before_options="-nostdin", options="-vn"
+            )
+            voice_client.play(source, after=_after_playing)
+            await ctx.send(f"**Now playing:** {title}")
+            error = await finished
+            if error:
+                await ctx.send(f"Error while playing {title}: {error}")
+        except discord.ClientException as e:
+            self.logger.error(f"Error while playing {song.url}: {e}")
+            await ctx.send(f"**Skipped:** {song.title} (reason: {e})")
+        finally:
+            if voice_client.is_playing():
+                voice_client.stop()
+            upcoming = {s.url for s in self._queue_list}
+            if song.url not in upcoming:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        self.logger.info(f"Deleted file: {file_path}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to remove file {file_path}: {e}")

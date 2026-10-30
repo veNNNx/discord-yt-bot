@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-from typing import TYPE_CHECKING, cast
+import os
+from typing import TYPE_CHECKING
 
-from discord import Embed, VoiceClient
+from discord import Embed
 from discord.ext.commands import (
     BadArgument,
     Cog,
@@ -29,41 +28,45 @@ class UtilsCog(Cog):
         self._utils_service = utils_service
         self._utils_service.start_check_inactivity(bot=self.bot)
 
-    @command(name="h", help="Show help for commands")
-    async def help_music(self, ctx: Context):
+    @command(name="h", help="Show help for commands (`!h pl` for playlist commands)")
+    async def help_music(self, ctx: Context, section: str = ""):
+        if section.lower() in ("pl", "playlist", "playlists"):
+            embed = Embed(
+                title="Memory playlists help",
+                description="Playlists saved in the bot's memory",
+                color=0x1DB954,
+            )
+            embed.add_field(
+                name="Commands",
+                value=(
+                    "`!pl <playlist_id>` — Play a memory playlist\n"
+                    "`!pl-c <name>` — Create a new empty playlist\n"
+                    "`!pl-d <playlist_id>` — Remove a playlist\n"
+                    "`!pl-a <playlist_id> <url>` — Add a YouTube URL to a playlist\n"
+                    "`!pl-l` — List all saved playlists\n"
+                    "`!pl-s <playlist_id>` — Show all songs in a playlist\n"
+                    "`!pl-r <playlist_id> <track_id>` — Remove a track from a playlist"
+                ),
+                inline=False,
+            )
+            await ctx.send(embed=embed)
+            return
+
         embed = Embed(
             title="Help",
             description="List of available commands and how to use them",
             color=0x1DB954,
         )
-
         embed.add_field(
-            name="Play a song",
+            name="Play a song or YouTube playlist",
             value="`!p <url>`",
-            inline=False,
-        )
-        embed.add_field(
-            name="Play memory playlist",
-            value="`!pl <playlist_id>`",
-            inline=False,
-        )
-        embed.add_field(
-            name="Memory playlist controls",
-            value=(
-                "`!pl-c <name>` — Create a new empty memory playlist\n"
-                "`!pl-d <playlist_id>` — Remove a memory playlist\n"
-                "`!pl-a <playlist_id> <url>` — Add a YouTube URL to a memory playlist\n"
-                "`!pl-l` — List all saved playlists\n"
-                "`!pl-s <playlist_id>` — Show all songs in a memory playlist\n"
-                "`!pl-r <playlist_id> <track_id>` — Remove a track from a memory playlist"
-            ),
             inline=False,
         )
         embed.add_field(
             name="Queue controls",
             value=(
                 "`!q` — Show current music queue\n"
-                "`!s` — Skip the currently playing song\n"
+                "`!s [count]` — Skip the current song (or the next `count` songs)\n"
                 "`!sa` — Skip all songs\n"
                 "`!mix` — Shuffle the current queue"
             ),
@@ -71,7 +74,12 @@ class UtilsCog(Cog):
         )
         embed.add_field(
             name="General bot controls",
-            value=("`!l` — Leave the voice channel\n`!r` - Reboot the bot container`",),
+            value="`!l` — Leave the voice channel\n`!r` — Reboot the bot container",
+            inline=False,
+        )
+        embed.add_field(
+            name="More",
+            value="`!h pl` — Memory playlist commands",
             inline=False,
         )
 
@@ -79,21 +87,14 @@ class UtilsCog(Cog):
 
     @command(name="l", help="Leave the voice channel")
     async def leave(self, ctx: Context) -> None:
-        if self.bot.music_service._playlist_task:
-            self.bot.music_service._playlist_task.cancel()
-        await self.bot.clear_music_queue()
-        await self._utils_service.leave(
-            ctx=ctx, voice_clients=cast(list[VoiceClient], self.bot.voice_clients)
-        )
+        await self.bot.music_service.hard_reset(ctx.guild)
 
     @command(name="r", help="Reboot the bot")
     async def reboot(self, ctx: Context) -> None:
         await ctx.send("Restarting")
-        await self._utils_service.leave(
-            ctx=ctx, voice_clients=cast(list[VoiceClient], self.bot.voice_clients)
-        )
-        script_path = Path(__file__).resolve().parent.parent / "scripts" / "restart.sh"
-        subprocess.Popen([script_path], shell=True)
+        await self.bot.music_service.hard_reset(ctx.guild)
+        # Hard exit; the container restart policy brings the bot back up.
+        os._exit(1)
 
     @Cog.listener()
     async def on_command_error(self, ctx, error):

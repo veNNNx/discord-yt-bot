@@ -24,7 +24,9 @@ class UtilsService:
     def _create_check_inactivity_loop(self, bot: DiscordBot):
         @tasks.loop(minutes=5)
         async def loop():
-            voice_clients = [vc for vc in bot.voice_clients if not vc.is_playing()]
+            if bot.music_service.is_busy():
+                return
+            voice_clients = [vc for vc in bot.voice_clients if not vc.is_playing() and not vc.is_paused()]
             for voice_channel in voice_clients:
                 self.logger.debug(
                     f"Bot disconnected from {voice_channel.channel.name} due to inactivity"
