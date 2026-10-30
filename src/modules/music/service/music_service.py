@@ -339,6 +339,7 @@ class MusicService:
         ydl_opts = {
             "format": "bestaudio/best",
             "quiet": True,
+            "no_warnings": True,
             "noplaylist": True,
             "outtmpl": os.path.join(self._downloads_dir, "%(title)s.%(ext)s"),
             "extractor_args": {"youtube": {"player_client": ["android"]}},
