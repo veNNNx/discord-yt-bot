@@ -9,9 +9,14 @@ Deployed via **Portainer**, this bot provides a simple and powerful way to play,
 - **`!p <url>`** - Play a song or YouTube playlist.  
   The bot automatically joins your voice channel and streams high-quality audio.  
 - **`!q`** - Show the current playback queue.  
-- **`!s`** - Skip the currently playing song.  
+- **`!s [count]`** - Skip the current song, or the current one plus the next `count - 1` songs. The bot announces who skipped what.  
 - **`!sa`** - Skip all songs and clear the queue.  
+- **`!pause`** / **`!resume`** - Pause or resume playback.  
 - **`!mix`** - Shuffle the entire playlist order for a new listening experience.  
+- **`!panel`** - Show the interactive player panel in the current channel.  
+
+### Player Panel
+A single "now playing" message with the song title, thumbnail and the next songs in the queue. It appears right after `!p` and is updated in place (moved to the bottom of the channel when others write below it). Buttons: **Pause/Resume**, **Skip**, **Skip N** (asks for a number), **Mix** and **Queue** (full queue, visible only to you). Only users in the bot's voice channel can use them.  
 
 ### Memory Playlists
 Create and manage persistent playlists that you can play later.
@@ -28,16 +33,17 @@ Playlists are stored in memory and can easily be accessed again.
 
 
 ### Utility Commands
-- **`!h`** — Display help for all available commands.  
-- **`!l`** — Leave the current voice channel.  
-- **`!r`** — Reboot the bot service (if hosted in docker container).  
+- **`!h`** — Display help for the main commands. **`!h pl`** shows memory playlist commands.  
+- **`!l`** — Hard reset: clear the queue, stop playback and leave the voice channel.  
+- **`!r`** — Hard reset and reboot the bot process (requires a container restart policy, e.g. `restart: always`).  
 
 
 ## Under the Hood
 
 This bot is powered by a clean, modular architecture:
 
-- **`MusicService`** – handles playback, queue management, and background prefetching for smooth transitions between songs.  
+- **`MusicService`** – handles playback (single player loop), queue management, and background prefetching for smooth transitions between songs.  
+- **`PlayerPanel`** – the interactive "now playing" message with buttons.  
 - **`YtPlaylistHandler`** – fetches and parses YouTube playlists.  
 - **`MemoryPlaylistHandler`** – manages in-memory playlists.  
 - **`MusicCog`** and **`UtilsCog`** – expose commands for user interaction.
@@ -60,12 +66,7 @@ YOUTUBE_API_KEY = "............"
 ## Setup docker image on server
 * Drop all files or clone repository on server (create config.py and add tokens)
 * Change permissions `chmod +x install_requirements.sh`
-* Change permissions `chmod +x  src/modules/utils/scripts/restart.sh`
 * Setup proper volume on server for static folder for in-memory playlists
 * Create Docker Image using content of `Dockerfile` and files from repository.
 * Create Custom Template in portainer using `portainer_template.txt`.
 * Deploy the stack.
-
-# TBD
-## Skip to selected song in queue
-
